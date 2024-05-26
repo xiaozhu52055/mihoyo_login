@@ -1,19 +1,23 @@
 import json
 import time
-import config
-import setting
-from request import http
-import tools
+import httpx
 import random
 from string import ascii_letters, digits
 from qrcode.main import QRCode
 from typing import Tuple, TypedDict, Literal
 from io import StringIO
-from loghelper import log
+import logging
 import uuid
+import hashlib
+from copy import deepcopy
+
+APP_VERSION = "2.71.1"
+DEVICE_NAME = "Xiaomi MI 6"
+DEVICE_MODEL = "MI 6"
+SALT_6X = "t0qEgfub6cvueAPgR5m9aQWWVciEer7v"
 
 HEADERS_QRCODE_API = {
-    "x-rpc-app_version": setting.mihoyobbs_version,
+    "x-rpc-app_version": APP_VERSION,
     "DS": None,
     "x-rpc-aigis": "",
     "Content-Type": "application/json",
@@ -21,8 +25,8 @@ HEADERS_QRCODE_API = {
     "x-rpc-game_biz": "bbs_cn",
     "x-rpc-sys_version": "12",
     "x-rpc-device_id": uuid.uuid4().hex,
-    "x-rpc-device_name": config.config["device"]["name"],
-    "x-rpc-device_model": config.config["device"]["model"],
+    "x-rpc-device_name": DEVICE_NAME,
+    "x-rpc-device_model": DEVICE_MODEL,
     "x-rpc-app_id": "bll8iq97cem8",
     "x-rpc-client_type": "4",
     "User-Agent": "okhttp/4.9.3",
@@ -33,6 +37,12 @@ TOKEN_BY_GAME_TOKEN_URL = (
 )
 CHECK_QR_URL = "https://hk4e-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/query"
 QR_URL = "https://hk4e-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/fetch"
+
+log = logging
+log.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%S')
 
 
 class PayloadRaw(TypedDict):
@@ -82,7 +92,22 @@ class StokenResult(TypedDict):
     data: StokenDataResult
 
 
-def get_qr_url() -> Tuple[str, str, str]:
+def get_ds2(query: str = "", body: str = "") -> str:
+    """
+    获取米游社的签名字符串，用于访问米游社API时的签名验证。
+
+    :param query: 请求的查询参数
+    :param body: 请求的主体内容
+    :return: 返回一个字符串，格式为"时间戳,随机字符串,签名"。
+    """
+    n = SALT_6X
+    i = str(int(time.time()))
+    r = str(random.randint(100001, 200000))
+    c = hashlib.md5(f'salt={n}&t={i}&r={r}&b={body}&q={query}').hexdigest()
+    return f"{i},{r},{c}"
+
+
+def get_qr_url() -> Tuple[str, str, str, str]:
     """
     说明:
         获取二维码URL
@@ -93,7 +118,7 @@ def get_qr_url() -> Tuple[str, str, str]:
         "app_id": app_id,
         "device": device,
     }
-    response = http.post(QR_URL, json=_json)
+    response = httpx.post(QR_URL, json=_json)
     result = response.json()
     data = result["data"]
     qr_url: str = data["url"]
@@ -115,24 +140,23 @@ def check_login(app_id: str, ticket: str, device: str):
     # {'stat': 'Confirmed', 'payload': {'proto': 'Account', 'raw': '{"uid":"","token":""}', 'ext': ''}, 'realname_info': None}
     while True:
         _json = {"app_id": app_id, "ticket": ticket, "device": device}
-        response = http.post(CHECK_QR_URL, json=_json)
+        response = httpx.post(CHECK_QR_URL, json=_json)
         result = response.json()
         data: CheckQRResult = result["data"]
         # match python>=3.10
-        match data["stat"]:
-            case "Init":
-                log.info("等待扫码")
-            case "Scanned":
-                log.info("等待确认")
-            case "Confirmed":
-                log.info("登录成功")
-                raw = json.loads(data["payload"]["raw"])
-                game_token = raw["token"]
-                uid = raw["uid"]
-                return uid, game_token
-            case _:
-                log.error("未知的状态")
-                raise ValueError("未知的状态")
+        if data["stat"] == "Init":
+            log.info("等待扫码")
+        elif data["stat"] == "Scanned":
+            log.info("等待确认")
+        elif data["stat"] == "Confirmed":
+            log.info("登录成功")
+            raw = json.loads(data["payload"]["raw"])
+            game_token = raw["token"]
+            uid = raw["uid"]
+            return uid, game_token
+        else:
+            log.error("未知的状态")
+            raise ValueError("未知的状态")
         time.sleep(1)
 
 
@@ -159,10 +183,10 @@ def get_stoken_by_game_token(uid: str, game_token: str):
         :param uid: 用户ID
         :param game_token: 游戏Token
     """
-    headers = HEADERS_QRCODE_API.copy()
+    headers = deepcopy(HEADERS_QRCODE_API)
     _json = {"account_id": int(uid), "game_token": game_token}
-    headers["DS"] = tools.get_ds2(body=json.dumps(_json))
-    response = http.post(
+    headers["DS"] = get_ds2(body=json.dumps(_json))
+    response = httpx.post(
         TOKEN_BY_GAME_TOKEN_URL,
         headers=headers,
         json=_json,
@@ -172,9 +196,13 @@ def get_stoken_by_game_token(uid: str, game_token: str):
     return data["token"]["token"]
 
 
-if __name__ == "__main__":
+def main():
     qr_url, app_id, ticket, device = get_qr_url()
     show_qrcode(qr_url)
     uid, game_token = check_login(app_id, ticket, device)
     stoken = get_stoken_by_game_token(uid, game_token)
     print(f"{uid=}, {game_token=}, {stoken=}")
+
+
+if __name__ == "__main__":
+    main()
