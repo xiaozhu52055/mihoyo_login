@@ -4,6 +4,7 @@ import httpx
 import random
 from string import ascii_letters, digits
 from qrcode.main import QRCode
+from qrcode.image.styledpil import StyledPilImage
 from typing import Tuple, TypedDict, Literal
 from io import StringIO
 import logging
@@ -169,6 +170,8 @@ def show_qrcode(qr_url: str):
     """
     qr = QRCode()
     qr.add_data(qr_url)
+    image = qr.make_image(image_factory=StyledPilImage)
+    image.save("code.png")
     f = StringIO()
     qr.print_ascii(out=f)
     f.seek(0)
