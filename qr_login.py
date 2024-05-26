@@ -104,7 +104,7 @@ def get_ds2(query: str = "", body: str = "") -> str:
     n = SALT_6X
     i = str(int(time.time()))
     r = str(random.randint(100001, 200000))
-    c = hashlib.md5(f'salt={n}&t={i}&r={r}&b={body}&q={query}').hexdigest()
+    c = hashlib.md5(f'salt={n}&t={i}&r={r}&b={body}&q={query}'.encode()).hexdigest()
     return f"{i},{r},{c}"
 
 
@@ -170,7 +170,7 @@ def show_qrcode(qr_url: str):
     """
     qr = QRCode()
     qr.add_data(qr_url)
-    image = qr.make_image(image_factory=StyledPilImage)
+    image = qr.make_image()
     image.save("code.png")
     f = StringIO()
     qr.print_ascii(out=f)
